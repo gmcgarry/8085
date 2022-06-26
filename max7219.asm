@@ -1,0 +1,223 @@
+; MAX7219 driver
+; SPI 8-digit LED Display Driver
+;
+; pins: VCC, GND, CLK, DATA
+;
+; 16-bit instructions, 8-bit address + 8-bit data
+; MSB first, latch bits on rising edge
+; 16 registers
+; BCD decode (0-9) is controlled per digit
+;
+; attached to 8155 PORTA, SDAT=0,SLAT=1,SCLK=2
+;
+
+PUTS	EQU	0F58H	; str in H
+MONITR	EQU	018AH
+
+STACK	EQU	0FFFFH
+
+; port addresses
+PORT	EQU	21H
+DDR	EQU	20H
+
+; pin assignments
+SDAT	EQU	0
+SLAT	EQU	1
+SCLK	EQU	2
+
+CMD_NOOP  	EQU	0
+CMD_DIGIT0	EQU	1
+CMD_DIGIT1	EQU	2
+CMD_DIGIT2	EQU	3
+CMD_DIGIT3	EQU	4
+CMD_DIGIT4	EQU	5
+CMD_DIGIT5	EQU	6
+CMD_DIGIT6	EQU	7
+CMD_DIGIT7	EQU	8
+CMD_DECODEMODE  EQU	9
+CMD_INTENSITY   EQU	10
+CMD_SCANLIMIT   EQU	11
+CMD_SHUTDOWN	EQU	12
+CMD_DISPLAYTEST	EQU	15
+
+	.org	8000H
+RESET:
+	LXI	SP,0FFFFH
+	JMP	MAIN
+
+; must be within 256-byte page
+;  A
+; F B
+;  G
+; E C
+;  D
+;
+; DP,ABCDEFG
+TBL:
+	.BYTE	01111110B,00110000B,01101101B,01111001B,00110011B,01011011B,01011111B,01110000B
+	.BYTE	01111111B,01111011B,01110111B,00011111B,01001110B,00111101B,01001111B,01000111B
+
+MAIN:
+	LXI	H,starts
+	CALL	PUTS
+
+	CALL	INIT
+
+	; reset
+	MVI	B,CMD_DISPLAYTEST
+	MVI	C,0
+	CALL	WRITECMD
+
+	; enable all LEDS/lines
+	MVI	B,CMD_SCANLIMIT
+	MVI	C,7
+	CALL	WRITECMD
+
+	; disable BCD decode on all digits
+	MVI	B,CMD_DECODEMODE
+	MVI	C,00H
+	CALL	WRITECMD
+
+	; clear display
+	CALL	CLEAR
+
+	; low intensity
+	MVI	B,CMD_INTENSITY
+	MVI	C,0
+	CALL	WRITECMD
+
+	; turn on
+	MVI	B,CMD_SHUTDOWN
+	MVI	C,1
+	CALL	WRITECMD
+
+	MVI	A,00H
+1:
+	DCR	A
+	CALL	PUTHEX
+	CALL	DELAY
+	JNZ	1b
+
+	LXI	H,ends
+	CALL	PUTS
+
+	JMP	MONITR
+
+starts:	.asciz	"max7219 LED driver.\r\n"
+ends:	.asciz	"done.\r\n"
+
+DELAY:
+	PUSH	PSW
+	PUSH	B
+	MVI	A,02Fh
+	MVI	B,0FFh
+1:	DCR	A
+2:	DCR	B
+	JNZ	2b
+	CPI	00h
+	JNZ	1b
+	POP	B
+	POP	PSW
+	RET
+
+; char in A
+PUTHEX:
+	PUSH	PSW
+	PUSH	B
+
+	PUSH	PSW
+	RRC
+	RRC
+	RRC
+	RRC
+	ANI	0FH
+	MOV	C,A
+	MVI	B,CMD_DIGIT1
+	CALL	SETDIGIT
+	POP	PSW
+	ANI	0FH
+	MOV	C,A
+	MVI	B,CMD_DIGIT0
+	CALL	SETDIGIT
+	
+	POP	B
+	POP	PSW
+	RET
+
+INIT:
+	PUSH	PSW
+	MVI	A,1	; PORTA as output
+	OUT	DDR
+	MVI	A,0
+	OUT	PORT
+	POP	PSW
+	RET
+
+CLEAR:
+	PUSH	PSW
+	PUSH	B
+	MVI	B,8
+	MVI	C,0
+1:
+	CALL	WRITECMD
+	DCR	B
+	JNZ	1b
+	POP	B
+	POP	PSW
+	RET
+
+; B=digit
+; C=value
+SETDIGIT:
+	PUSH	PSW
+	PUSH	B
+	PUSH	H
+	LXI	H,TBL
+	MOV	A,L
+	ADD	C
+	MOV	L,A
+	MOV	C,M
+	CALL	WRITECMD
+	POP	H
+	POP	B
+	POP	PSW
+	RET
+
+; B=command
+; C=data
+; trashed: A
+WRITECMD:	; sent MSB first
+	PUSH	B
+	PUSH	D
+
+	CALL	WRITEBYTE
+	MOV	B,C
+	CALL	WRITEBYTE
+
+	MVI	A,(1<<SLAT)	; pull LATCH high
+	OUT	PORT
+
+	MVI	A,0		; pull LATCH low
+	OUT	PORT
+
+	POP	D
+	POP	B
+	RET
+
+; B=byte
+; trashed: E,A
+WRITEBYTE:
+	MVI	E,8
+1:
+	MOV	A,B
+	RLC
+	MOV	B,A
+	ANI	(1<<SDAT)	; mask SDAT
+	OUT	PORT
+	ORI	(1<<SCLK)	; SCLK high
+	OUT	PORT
+	ANI	(1<<SDAT)	; SCLK low
+	OUT	PORT
+	DCR	E
+	JNZ	1b
+	RET

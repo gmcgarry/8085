@@ -1,0 +1,94 @@
+SDA	EQU 1
+SCL	EQU 0
+PORT	EQU 21H
+DDR	EQU 20H
+
+i2c_init:
+	PUSH	PSW
+	MVI	A,1	; PORTA as output
+	OUT	DDR
+	MVI	A,3	; SCL/SDA high
+	OUT	PORT
+	POP	PSW
+	RET
+
+; SCL/SDA will both be high
+i2c_start:
+	PUSH	PSW
+	MVI	A,3	; SDL+SDA high
+	OUT	PORT
+	MVI	A,1	; SDA low
+	OUT	PORT
+	MVI	A,0	; SCL low
+	OUT	PORT
+	POP	PSW
+	RET
+ 
+i2c_stop:
+	PUSH	PSW
+	MVI	A,0	; SDA/SCL low
+	OUT	PORT
+	MVI	A,1	; SCL high
+	OUT	PORT
+	MVI	A,3	; SDA high
+	OUT	PORT
+	POP	PSW
+	RET
+
+; SCL/SDA will both be low after start
+i2c_write:
+	PUSH	PSW
+	PUSH	B
+	MOV	C,A
+	MVI 	B,08H
+	MVI	A,0
+1:
+	ANI	0FEH	; SCL low
+	OUT	PORT
+	MOV	A,C
+	RAL
+	MOV	C,A
+	MVI	A,00H	; SDA set
+	RAL
+	RAL
+	OUT	PORT
+	ORI	01H	; SCL high
+	OUT	PORT
+	DCR	B
+	JNZ	1b
+
+	ANI	0FEH	; SCL low
+	OUT	PORT
+
+	MVI	A,2	; SDA high
+	OUT	PORT
+	MVI	A,3	; SCL high
+	OUT	PORT
+	MVI	A,2	; SCL low
+	OUT	PORT
+
+	POP	B
+	POP	PSW
+	RET
+ 
+i2c_read:
+	PUSH	PSW
+	PUSH	B
+	
+	MVI 	B,08H
+1:
+	MVI	A,2	; SCL low
+	OUT	PORT
+	MVI	A,3	; SCL high
+	IN	PORT
+	RRC
+	MOV	A,C
+	RRC
+	MOV	C,A
+	DCR	B
+	JNZ	1b
+	ANI	0FEH	; SCL low
+	OUT	PORT
+	MVI	A,2	; SDA high
+	OUT	PORT
+	RET
