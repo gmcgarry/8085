@@ -1,7 +1,7 @@
 ; MAX7219 driver
 ; SPI 8-digit LED Display Driver
 ;
-; pins: VCC, GND, CLK, DATA
+; pins: VCC, GND, DATA, CS, CLK
 ;
 ; 16-bit instructions, 8-bit address + 8-bit data
 ; MSB first, latch bits on rising edge
@@ -221,3 +221,5 @@ WRITEBYTE:
 	DCR	E
 	JNZ	1b
 	RET
+
+	END

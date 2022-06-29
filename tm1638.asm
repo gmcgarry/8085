@@ -1,0 +1,569 @@
+; TM1638 driver
+; SPI 8-digit LED display + 4x4 button matrix
+;
+; This board is common anode, which reverses
+; the seg/grid pins.
+;
+; has 16 8-bit registers 0-F
+;  (only even registers are used on 8-digit displays)
+;
+; pins: GND, DIO, CLK, STB, VCC
+;
+; attached to 8155 PORTA, DIO=0,CLK=1,STB=2
+;
+; LSB first
+
+MONITR	EQU	018AH
+SPACE	EQU	089BH
+PUTHEX	EQU	0F40H
+PUTS	EQU	0F58H	; str in H
+CRLF	EQU	0F9FH
+PUTC	EQU	0FA6H
+
+STACK	EQU	0FFFFH
+
+; port addresses
+PORT	EQU	21H
+DDR	EQU	20H
+
+; pin assignments
+DIO	EQU	0
+CLK	EQU	1
+STB	EQU	2
+
+CMD_DAT	EQU	40H
+CMD_CTL	EQU	80H
+CMD_ADD	EQU	0C0H
+
+; control bits
+INTENS	EQU	00H	; PWM (intensity)
+ENABLE	EQU	08H	; 0=off, 1=on
+
+	ORG	8000H
+START:
+	LXI	SP,0FFFFH
+	JMP	MAIN
+
+;  A
+; F B
+;  G
+; E C
+;  D  DP
+;
+; DP,G,F,E,D,C,B,A
+HEXTBL:
+	.BYTE	00111111B,00000110B,01011011B,01001111B,01100110B,01101101B,01111101B,00000111B
+	.BYTE	01111111B,01101111B,01110111B,01111100B,00111001B,01011110B,01111001B,01110001B
+
+ASCTBL:
+  	.BYTE	00H, 00H, 00H, 00H, 00H, 00H, 00H, 00H
+	.BYTE	00H, 00H, 00H, 00H, 00H, 00H, 00H, 00H
+	.BYTE	00H, 00H, 00H, 00H, 00H, 00H, 00H, 00H
+	.BYTE	00H, 00H, 00H, 00H, 00H, 00H, 00H, 00H
+
+	.BYTE	00H, 86H, 22H, 7eH, 6dH, 00H, 00H, 02H
+	.BYTE	30H, 06H, 63H, 00H, 04H, 40H, 80H, 52H
+	.BYTE	3fH, 06H, 5bH, 4fH, 66H, 6dH, 7dH, 27H
+	.BYTE	7fH, 6fH, 00H, 00H, 00H, 48H, 00H, 53H
+	.BYTE	5fH, 77H, 7fH, 39H, 3fH, 79H, 71H, 3dH
+	.BYTE	76H, 06H, 1fH, 69H, 38H, 15H, 37H, 3fH
+	.BYTE	73H, 67H, 31H, 6dH, 78H, 3eH, 2aH, 1dH
+	.BYTE	76H, 6eH, 5bH, 39H, 64H, 0fH, 00H, 08H
+	.BYTE	20H, 5fH, 7cH, 58H, 5eH, 7bH, 31H, 6fH
+	.BYTE	74H, 04H, 0eH, 75H, 30H, 55H, 54H, 5cH
+	.BYTE	73H, 67H, 50H, 6dH, 78H, 1cH, 2aH, 1dH
+	.BYTE	76H, 6eH, 47H, 46H, 06H, 70H, 01H, 00H
+
+
+MAIN:
+	LXI	H,starts
+	CALL	PUTS
+
+	CALL	INIT
+
+	CALL	HELLO
+	CALL	DELAY
+
+	CALL	FLASH
+	CALL	DELAY
+	CALL	PUTTEST
+	CALL	DELAY
+
+	CALL	CLEAR
+	CALL	DELAY
+	CALL	PUTZERO
+	CALL	DELAY
+	CALL	PUTCOUNT
+	CALL	DELAY
+	CALL	PUTCOUNT2
+	CALL	DELAY
+
+	CALL	SHOWASCII
+
+	CALL	COUNTDOWN
+
+	LXI	H,ends
+	CALL	PUTS
+
+	JMP	MONITR
+
+starts:	.asciz	"TM1638 LED and button matrix driver.\r\n"
+ends:	.asciz	"done.\r\n"
+
+DELAY:
+	PUSH	PSW
+	PUSH	B
+	MVI	A,0FFh
+	MVI	B,0FFh
+	MVI	C,05h
+1:	DCR	A
+	JNZ	1b
+	DCR	B
+	JNZ	1b
+	DCR	C
+	JNZ	1b
+	POP	B
+	POP	PSW
+	RET
+
+SHORTDELAY:
+	PUSH	B
+	MVI	B,0FFh
+	MVI	C,0FFh
+1:	DCR	B
+	JNZ	1b
+	DCR	C
+	JNZ	1b
+	POP	B
+	RET
+
+1:	.asciz	"puttest\r\n"
+PUTTEST:	; turn on seg A in digit 0
+	LXI	H,1b
+	CALL	PUTS
+
+	MVI	B,0	; seg A on all digits
+	MVI	C,01H	; select digit 0
+	CALL	WRITEDATA
+
+	MVI	B,2	; seg DP on all digits
+	MVI	C,02H	; select digit 0
+	CALL	WRITEDATA
+
+	MVI	B,4	; seg DP on all digits
+	MVI	C,04H	; select digit 0
+	CALL	WRITEDATA
+
+	MVI	B,6	; seg DP on all digits
+	MVI	C,08H	; select digit 0
+	CALL	WRITEDATA
+
+	MVI	B,8	; seg DP on all digits
+	MVI	C,10H	; select digit 0
+	CALL	WRITEDATA
+
+	MVI	B,10	; seg DP on all digits
+	MVI	C,20H	; select digit 0
+	CALL	WRITEDATA
+
+	MVI	B,12	; seg DP on all digits
+	MVI	C,40H	; select digit 0
+	CALL	WRITEDATA
+
+	MVI	B,14	; seg DP on all digits
+	MVI	C,80H	; select digit 0
+	CALL	WRITEDATA
+
+	RET
+
+1:	.asciz	"putzero\r\n"
+PUTZERO:
+	LXI	H,1b
+	CALL	PUTS
+	MVI	B,1		; digit 0
+	MVI	C,00111111B	; zero
+	CALL	SETBYTE
+	CALL	FLUSH
+	RET
+
+1:	.asciz	"putcount\r\n"
+PUTCOUNT:
+	LXI	H,1b
+	CALL	PUTS
+	MVI	B,7	; position
+	LXI	H,HEXTBL
+1:	MOV	C,M
+	CALL	SETBYTE
+	INX	H
+	DCR	B
+	JP	1b
+	CALL	FLUSH
+	RET
+
+1:	.asciz	"putcount2\r\n"
+PUTCOUNT2:
+	LXI	H,1b
+	CALL	PUTS
+	MVI	B,7	; position
+	LXI	H,HEXTBL+8
+1:	MOV	C,M
+	CALL	SETBYTE
+	INX	H
+	DCR	B
+	JP	1b
+	CALL	FLUSH
+	RET
+
+
+1:	.asciz	"countdown\r\n"
+COUNTDOWN:
+	PUSH	PSW
+	LXI	H,1b
+	CALL	PUTS
+	CALL	CLEAR
+	MVI	A,00H
+1:	CALL	OUTH
+	CALL	SHORTDELAY
+	INR	A
+	JNZ	1b
+	POP	PSW
+	RET
+
+1:	.asciz	"showascii\r\n"
+SHOWASCII:
+	PUSH	B
+	LXI	H,1b
+	CALL	PUTS
+	CALL	CLEAR
+	MVI	B,7
+	MVI	C,127
+1:	CALL	SETCHAR
+	MOV	A,C
+	CALL	PUTC
+	CALL	CRLF
+	CALL	SHORTDELAY
+	DCR	C
+	JP	1b
+	POP	B
+	RET
+
+1:	.asciz	"HELLO,hello"
+HELLO:
+	PUSH	H
+	LXI	H,1b
+	CALL	PUTSTRING
+	POP	H
+	RET
+
+; string pointer in H
+PUTSTRING:
+	PUSH	PSW
+	PUSH	B
+	PUSH	H
+
+	PUSH	H
+	CALL	PUTS
+	POP	H
+
+	MVI	B,7
+1:	MOV	A,M
+	CPI	0
+	JZ	2f
+	MOV	C,A
+	CALL	SETCHAR
+	INX	H
+	DCR	B
+	JP	1b
+2:	CALL	FLUSH
+	POP	H
+	POP	B
+	POP	PSW
+	RET
+
+; char in A
+OUTH:
+	PUSH	PSW
+	PUSH	H
+	PUSH	B
+
+;	CALL	CLEAR
+
+	PUSH	PSW
+	RRC
+	RRC
+	RRC
+	RRC
+	ANI	0FH
+	
+	MVI	B,0
+	MOV	C,A
+	LXI	H,HEXTBL
+	DAD	B
+
+	MOV	C,M
+	MVI	B,1	; digit 1
+	CALL	SETBYTE
+
+	POP	PSW
+	ANI	0FH
+
+	MVI	B,0
+	MOV	C,A	; bits
+	LXI	H,HEXTBL
+	DAD	B
+
+	MOV	C,M
+	MVI	B,0	; digit 0
+	CALL	SETBYTE
+	CALL	FLUSH
+	POP	B
+	POP	H
+	POP	PSW
+	RET
+
+1:	.asciz	"flash\r\n"
+FLASH:
+	LXI	H,1b
+	CALL	PUTS
+	PUSH	B
+	PUSH	H
+	MVI	B,(7<<1)	; digit 7
+	MVI	C,7EH		; zero
+1:	CALL	WRITEDATA
+	DCR	B
+	DCR	B
+	JP	1b
+	POP	H
+	POP	B
+	RET
+
+BUFFER:	.ZERO	16
+
+1:	.asciz	"reset\r\n"
+RESET:
+	PUSH	B
+	PUSH	H
+	LXI	H,1b
+	CALL	PUTS
+ 	MVI	C,00H
+	MVI	B,16
+1:	CALL	WRITEDATA
+	DCR	B
+	JNZ	1b
+	POP	H
+	POP	B
+	RET
+
+CLEAR:
+	PUSH	B
+	PUSH	H
+ 	MVI	C,00H
+	MVI	B,16
+	LXI	H,BUFFER
+1:	MOV	M,C
+	INX	H
+	DCR	B
+	JNZ	1b
+	CALL	FLUSH
+	POP	H
+	POP	B
+	RET
+
+FLUSH:
+	PUSH	B
+	PUSH	H
+	MVI	B,0FH
+	LXI	H,BUFFER+0FH
+1:	MOV	C,M
+	CALL	WRITEDATA
+	DCX	H
+	DCR	B
+	JP	1b
+	POP	H
+	POP	B
+	RET
+
+; B=position
+; C=char
+SETCHAR:
+	PUSH	PSW
+	PUSH	H
+	PUSH	B
+
+	MOV	A,C
+	ANI	7FH
+	MOV	C,A
+
+	MOV	A,B
+
+	MVI	B,0
+	LXI	H,ASCTBL
+	DAD	B
+
+	MOV	B,A
+	MOV	C,M
+	CALL	SETBYTE
+
+	CALL	FLUSH
+
+	POP	B
+	POP	H
+	POP	PSW
+	RET
+
+; B=position
+; C=value
+SETBYTE:
+	; mask = 1;
+	; ptr = BUFFER
+	; for (i=8,mask=1;i>0; i--, mask<<=1, ptr += 2)
+ 	;   if (C&mask)
+        ;      *ptr |= (1<<B);
+	;   else
+        ;      *ptr &= ~(1<<B);
+	;
+	PUSH	PSW
+	PUSH	B
+	PUSH	D
+	PUSH	H
+
+	LXI	H,BUFFER
+
+	STC
+	MVI	A,0
+1:	RAL
+	ANA	A	; clear carry
+	DCR	B
+	JP	1b
+
+	MOV	D,A	; (1<<B)
+	CMA
+	MOV	E,A	; ~(1<<B)
+
+	MVI	B,8	; i
+1:	MOV	A,C
+	RRC
+	MOV	C,A
+	JNC	2f
+	MOV	A,M
+	ORA	D
+	MOV	M,A	; *ptr |= (1<<B)
+	JMP	3f
+2:	MOV	A,M
+	ANA	E
+	MOV	M,A	; *ptr &= ~(1<<B)
+3:	INX	H
+	INX	H	; ptr += 2
+	DCR	B	; i--
+	JNZ	1b
+
+	POP	H
+	POP	D
+	POP	B
+	POP	PSW
+	RET
+
+INIT:
+	PUSH	PSW
+	PUSH	B
+
+	MVI	A,1		; PORTA as output
+	OUT	DDR
+	MVI	A,(1<<STB)|(1<<CLK)
+	OUT	PORT
+
+	MVI	B,CMD_CTL+ENABLE+INTENS
+	CALL	WRITECMD
+
+	MVI	B,CMD_ADD|0	; set address 0
+	CALL	WRITECMD
+
+	MVI	A,(1<<CLK)	; STB low
+	OUT	PORT
+
+	MVI	B,CMD_DAT	; auto-increment
+	CALL	WRITEBYTE
+
+	MVI	A,16
+	MVI	B,0
+1:	CALL	WRITEBYTE
+	DCR	A
+	JNZ	1b
+
+	MVI	A,(1<<STB)|(1<<CLK)	; STB high
+	OUT	PORT
+
+	POP	B
+	POP	PSW
+	RET
+
+; B=address
+; C=data
+WRITEDATA:
+	PUSH	PSW
+	PUSH	B
+	PUSH	D
+
+	MOV	D,B
+
+	MVI	B,CMD_DAT+04H	; write to fixed address
+	CALL	WRITECMD
+
+	MOV	A,D		; set address
+	ORI	CMD_ADD
+	MOV	B,A
+
+	MVI	A,(1<<CLK)	; STB low
+	OUT	PORT
+
+	CALL	WRITEBYTE
+
+	MOV	B,C
+	CALL	WRITEBYTE
+
+	MVI	A,(1<<STB)|(1<<CLK)	; STB high
+	OUT	PORT
+
+	POP	D
+	POP	B
+	POP	PSW
+	RET
+
+; B=command
+WRITECMD:
+	PUSH	PSW
+
+	MVI	A,(1<<CLK)		; STB  low
+	OUT	PORT
+
+	CALL	WRITEBYTE
+
+	MVI	A,(1<<STB)|(1<<CLK)	; STB  high
+	OUT	PORT
+
+	POP	PSW
+	RET
+
+; B=byte
+WRITEBYTE:
+	PUSH	PSW
+	PUSH	B
+
+	MVI	C,08H
+	MOV	A,B
+1:
+	ANI	(1<<DIO)	; CLK low + mask DIO (assumes DIO is MSB)
+	OUT	PORT
+	ORI	(1<<CLK)	; CLK high
+	OUT	PORT
+	MOV	A,B
+	RRC
+	MOV	B,A
+	DCR	C
+	JNZ	1b
+
+	POP	B
+	POP	PSW
+	RET
+
+	END
